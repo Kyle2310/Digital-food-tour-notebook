@@ -20,17 +20,17 @@ const BOOK = {
 
 /* Nhạc: bỏ file mp3 vào thư mục audio/ với đúng tên dưới đây.
    main = bìa, lời nói đầu, mục lục, hộp góp ý. Mỗi loại quán 1 bài riêng. */
-const MUSIC = { main: "audio/nhac-1.mp3" };
+const MUSIC = { main: "audio/Luigi Boccherini - Minuet - String Quintet (mp3cut.net) (1).mp3" };
 
 /* Các loại quán (mục lục). color = màu của mục theo styleguide. */
 const SECTIONS = [
-  { id: "quan-an-no", name: "Quán ăn no", color: "#cf4c64", music: "audio/nhac-1.mp3",
+  { id: "quan-an-no", name: "Quán ăn no", color: "#cf4c64", music: "audio/Luigi Boccherini - Minuet - String Quintet (mp3cut.net) (1).mp3",
     blurb: "Cơm, bún, phở: no bụng, chắc bụng, rẻ mà ngon." },
-  { id: "an-uong-vat", name: "Quán ăn, uống vặt", color: "#ff8643", music: "audio/nhac-1.mp3",
+  { id: "an-uong-vat", name: "Quán ăn, uống vặt", color: "#ff8643", music: "audio/Luigi Boccherini - Minuet - String Quintet (mp3cut.net) (1).mp3",
     blurb: "Mấy món nhâm nhi và ly nước mát sau giờ học." },
-  { id: "cafe", name: "Quán cafe", color: "#82649d", music: "audio/nhac-1.mp3",
+  { id: "cafe", name: "Quán cafe", color: "#82649d", music: "audio/Luigi Boccherini - Minuet - String Quintet (mp3cut.net) (1).mp3",
     blurb: "Chỗ ngồi chill, học bài, tán gẫu." },
-  { id: "vui-choi", name: "Vui chơi, giải trí", color: "#8393cc", music: "audio/nhac-1.mp3",
+  { id: "vui-choi", name: "Vui chơi, giải trí", color: "#8393cc", music: "audio/Luigi Boccherini - Minuet - String Quintet (mp3cut.net) (1).mp3",
     blurb: "Ăn xong rồi đi đâu chơi? Ở đây nè." }
 ];
 
