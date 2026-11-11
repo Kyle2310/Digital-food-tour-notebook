@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sổ tay · Admin</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap">
+<style>
+  :root { --paper: #fbf2e2; --ink: #2b2723; --muted: #6f6a63; --line: #e6d9c2; --red: #cf4c64; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 "Montserrat", system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 1.5em; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 22px; }
+  label { font-weight: 600; display: block; margin-bottom: 6px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1; min-width: 180px; font: inherit; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; }
+  button { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1.5px solid var(--ink); background: #fff; cursor: pointer; }
+  button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #msg { min-height: 1.5em; margin: 12px 0 18px; font-weight: 600; }
+  #msg.err { color: var(--red); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { font-size: .85em; color: var(--muted); font-weight: 600; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; width: 4em; }
+  td.b { width: 1%; white-space: nowrap; }
+  td.b button { padding: 5px 10px; font-size: .85em; }
+  tr.sec td { padding-top: 20px; font-weight: 700; border-bottom: 2px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quản lý lượt 👍</h1>
+  <p class="sub">Đưa lượt thích của một quán hoặc tất cả quán về 0.</p>
+
+  <label for="key">Mã admin</label>
+  <div class="row">
+    <input id="key" type="password" autocomplete="current-password" placeholder="Mã đặt trong Netlify (ADMIN_KEY)">
+    <button id="all" class="danger" type="button">Reset tất cả về 0</button>
+  </div>
+  <div id="msg" role="status"></div>
+
+  <table>
+    <thead><tr><th>Quán</th><th style="text-align:right">👍</th><th></th></tr></thead>
+    <tbody id="list"></tbody>
+  </table>
+</main>
+
+<script src="js/data.js"></script>
+<script>
+const API = "/api/votes";
+const $ = id => document.getElementById(id);
+const msg = (t, err) => { $("msg").textContent = t; $("msg").className = err ? "err" : ""; };
+let counts = {};
+
+async function load() {
+  try { const r = await fetch(API, { cache: "no-store" }); if (r.ok) counts = await r.json(); else throw 0; }
+  catch (e) { msg("Không đọc được số lượt (trang này chỉ chạy trên Netlify).", true); }
+  const rows = [];
+  SECTIONS.forEach(sec => {
+    rows.push(`<tr class="sec"><td colspan="3" style="color:${sec.color}">${sec.name}</td></tr>`);
+    PLACES.filter(p => p.section === sec.id).forEach(p => {
+      const n = (counts[p.id] || {}).up || 0;
+      rows.push(`<tr><td>${p.name}${p.address ? `<br><small style="color:var(--muted)">${String(p.address).split("\n")[0]}</small>` : ""}</td>
+        <td class="n">${n.toLocaleString("vi-VN")}</td>
+        <td class="b"><button type="button" data-id="${p.id}" ${n ? "" : "disabled"}>Về 0</button></td></tr>`);
+    });
+  });
+  $("list").innerHTML = rows.join("");
+}
+
+async function reset(id, label) {
+  const key = $("key").value.trim();
+  if (!key) { msg("Nhập mã admin trước.", true); $("key").focus(); return; }
+  if (!confirm(`Đưa lượt 👍 của ${label} về 0? Không hoàn tác được.`)) return;
+  try {
+    const r = await fetch(API, { method: "DELETE", headers: { "Content-Type": "application/json", Authorization: "Bearer " + key }, body: JSON.stringify(id ? { id } : {}) });
+    if (r.status === 403) return msg("Sai mã admin.", true);
+    if (!r.ok) return msg("Có lỗi, thử lại sau.", true);
+    msg(`Đã reset ${label} về 0.`);
+    load();
+  } catch (e) { msg("Mất kết nối, thử lại sau.", true); }
+}
+
+$("all").onclick = () => reset(null, "tất cả quán");
+$("list").onclick = e => {
+  const b = e.target.closest("button[data-id]");
+  if (b) reset(b.dataset.id, PLACES.find(p => p.id === b.dataset.id).name);
+};
+load();
+</script>
+</body>
+</html>
