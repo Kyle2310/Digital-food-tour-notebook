@@ -26,6 +26,13 @@ const bandOf = p => { const k = Number(p.km); return !(k >= 1) ? 0 : k < 2 ? 1 :
 // quán của 1 mục, xếp theo nhóm khoảng cách (giữ thứ tự gốc trong cùng nhóm) → thứ tự trang = thứ tự trong danh sách
 const placesOf = id => PLACES.filter(p => p.section === id)
   .map((p, n) => ({ p, n })).sort((a, b) => bandOf(a.p) - bandOf(b.p) || a.n - b.n).map(x => x.p);
+/* Khung cắt ảnh (từ trang "Cắt ảnh"): CROPS["ten-anh-1"] = { x, y, z } — x, y: 0–1 vị trí, z: phóng to (1 = vừa khung) */
+function cropStyle(src) {
+  const c = (typeof CROPS !== "undefined" && CROPS[String(src).replace(/^images\//, "").replace(/\.\w+$/, "")]) || null;
+  if (!c) return "";
+  const x = (c.x * 100).toFixed(2) + "%", y = (c.y * 100).toFixed(2) + "%";
+  return ` style="object-position:${x} ${y};transform-origin:${x} ${y};transform:scale(${(+c.z || 1).toFixed(3)})"`;
+}
 const photosOf = p => {
   const list = Array.isArray(p.photos) && p.photos.length ? p.photos.slice(0, 4) : p.photo ? [p.photo] : [];
   while (list.length < 2) list.push("");
@@ -36,7 +43,9 @@ function stars(r) {
   return `<span class="stars" style="--r:${(r / 5) * 100}%" aria-hidden="true">★★★★★</span> <b>${r}</b>/5`;
 }
 function mapUrl(p) {
-  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(p.name + ", " + p.address);
+  if (p.mapq) return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(p.mapq);   // tìm riêng cho quán Google không có / ra danh sách
+  const first = String(p.address).split("\n")[0].replace(/^CN [^:]*:\s*/, "");      // nhiều chi nhánh: chỉ đường tới chi nhánh đầu
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(p.name + ", " + first);
 }
 
 /* ---------- 1. Xếp các trang theo thứ tự ---------- */
@@ -50,12 +59,11 @@ addSide({ key: "toc", kind: "toc" });
 /* Trang mỗi mục: danh sách quán chia theo khoảng cách, cả mục nằm trên 1 trang, chữ giữ nguyên cỡ.
    (Với cỡ chữ hiện tại, 1 trang chứa vừa khoảng 6–7 quán cho mỗi mục.) */
 const FOOT_GAP = 0.9;          // khoảng trống tối thiểu giữa nội dung và chân trang (tính theo cỡ chữ của trang)
-function listHead(sec, part) {
-  return part === 0
-    ? `<header class="band"><span class="band-no">Mục ${SECTIONS.indexOf(sec) + 1}</span>
-        <h2 class="script">${esc(sec.name)}</h2><p>${esc(sec.blurb)}</p></header>`
-    : `<header class="band band-cont"><span class="band-no">Mục ${SECTIONS.indexOf(sec) + 1}</span>
-        <h2 class="script">${esc(sec.name)}</h2></header>`;
+// Chừa thêm 1 dòng: mỗi máy/cỡ màn hình xuống dòng hơi khác nhau (nhất là Windows), 1 địa chỉ có thể dài thêm 1 dòng so với lúc đo
+const LIST_SAFE = 1.3;
+function listHead(sec, part) {      // mọi trang của mục (kể cả trang sau) dùng cùng 1 tiêu đề, cùng cỡ
+  return `<header class="band"><span class="band-no">Mục ${SECTIONS.indexOf(sec) + 1}</span>
+        <h2 class="script">${esc(sec.name)}</h2><p>${esc(sec.blurb)}</p></header>`;
 }
 function listBody(items) {
   let html = "", open = false;
@@ -67,8 +75,8 @@ function listBody(items) {
       if (!open) { html += `<ol class="plist" start="${e.n}" style="counter-reset: p ${e.n - 1}">`; open = true; }
       const p = e.p;
       html += `<li><button type="button" data-goto="place:${p.id}">
-        <span class="pl-name">${esc(p.name)}</span><span class="pl-rate"><span class="pl-star">★</span> ${p.rating}</span>
-        <span class="pl-addr">${esc(p.address)}</span></button></li>`;
+        <span class="pl-name">${esc(p.name)}</span><span class="pl-rate">${p.rating != null ? `<span class="pl-star">★</span> ${p.rating}` : ""}</span>
+        <span class="pl-addr">${esc(String(p.address).split("\n")[0])}</span></button></li>`;
     }
   });
   return html + (open ? "</ol>" : "");
@@ -83,8 +91,39 @@ function listEntries(sec) {
   });
   return entries;
 }
+const fitProbe = document.createElement("div");
+fitProbe.className = "side rp";
+fitProbe.style.cssText = "--pw:480px;--ph:640px;left:-9999px;top:0;visibility:hidden;position:fixed";
+function listFits(sec, part, items) {
+  fitProbe.innerHTML = `<div class="page" style="--c:${sec.color}">${listHead(sec, part)}<div class="plists">${listBody(items)}</div>
+    <footer class="pf"><span class="link">Mục lục</span><span class="pno">00</span></footer></div>`;
+  const em = parseFloat(getComputedStyle(fitProbe).fontSize);
+  const foot = fitProbe.querySelector(".pf").getBoundingClientRect().top;
+  let bottom = 0;
+  fitProbe.querySelectorAll(".band, .plists > *").forEach(k => { bottom = Math.max(bottom, k.getBoundingClientRect().bottom); });
+  return foot - bottom >= (FOOT_GAP + LIST_SAFE) * em;
+}
+// danh sách quán của mục dài hơn 1 trang thì phần còn lại sang trang sau (cùng cỡ chữ, không lặp lại tiêu đề nhóm đang dở)
+function paginateList(sec) {
+  const entries = listEntries(sec);
+  document.body.appendChild(fitProbe);
+  const pages = [[]];
+  for (let k = 0; k < entries.length; k++) {
+    const e = entries[k], cur = pages[pages.length - 1];
+    const add = e.t === "head" ? [e, entries[k + 1]] : [e];      // tiêu đề nhóm luôn đi cùng quán đầu tiên của nhóm
+    if (cur.length && !listFits(sec, pages.length - 1, cur.concat(add))) pages.push([]);
+    pages[pages.length - 1].push(...add);
+    if (e.t === "head") k++;
+  }
+  fitProbe.remove();
+  return pages;
+}
+const LIST_SPLIT = {};
 SECTIONS.forEach(sec => {
-  addSide({ key: "sec:" + sec.id, kind: "list", section: sec.id, items: listEntries(sec), part: 0 });   // cả mục luôn trên 1 trang
+  const pages = paginateList(sec);
+  LIST_SPLIT[sec.id] = pages.map(pg => pg.length).join(",");
+  pages.forEach((items, k) =>
+    addSide({ key: "sec:" + sec.id + (k ? ":" + (k + 1) : ""), kind: "list", section: sec.id, items, part: k }));
   placesOf(sec.id).forEach(p => addSide({ key: "place:" + p.id, kind: "place", section: sec.id, place: p }));
 });
 // Hộp góp ý chiếm trọn 2 trang: luôn bắt đầu ở trang trái
@@ -148,8 +187,8 @@ function renderSide(side, i) {
     case "place": {
       const p = side.place;
       return `<div class="page" style="--c:${sec.color};--on:${sec.on};--ct:${sec.ct}">
-        <div class="photo n${photosOf(p).length}">${photosOf(p).map((src, k) =>
-          `<div class="ph">${src ? `<img src="${esc(src)}" alt="${esc(p.name)} – ảnh ${k + 1}">` : ""}</div>`).join("")}</div>
+        <div class="photo n${photosOf(p).length}${p.layout === "rows" ? " rows" : ""}">${photosOf(p).map((src, k) =>
+          `<div class="ph">${src ? `<img src="${esc(src)}" alt="${esc(p.name)} – ảnh ${k + 1}" loading="lazy" decoding="async"${cropStyle(src)}>` : ""}</div>`).join("")}</div>
         <div class="name-row">
           <h2 class="script pname">${esc(p.name)}</h2>
           <div class="votes" data-place="${p.id}">
@@ -159,12 +198,12 @@ function renderSide(side, i) {
             <span class="vcount">0</span>
           </div>
         </div>
-        <p class="rating">${stars(p.rating)}</p>
+        ${p.rating != null ? `<p class="rating">${stars(p.rating)}</p>` : ""}
         <dl class="facts">
-          <div><dt>Địa chỉ</dt><dd>${esc(p.address)}</dd></div>
+          <div><dt>Địa chỉ</dt><dd>${esc(p.address).replace(/\n/g, "<br>")}</dd></div>
           ${p.note ? `<div><dt>Lưu ý</dt><dd>${esc(p.note)}</dd></div>` : ""}
         </dl>
-        <p class="review">“${esc(p.review)}”</p>
+        ${p.review ? `<p class="review" data-full="${esc(p.review)}">“${esc(p.review)}”</p>` : ""}
         <a class="maplink" href="${mapUrl(p)}" target="_blank" rel="noopener">Mở Google Maps ↗</a>
         ${footer(i, sec)}
       </div>`;
@@ -780,7 +819,16 @@ bookEl.addEventListener("pointercancel", release);
 
 /* ---------- 4. Số trang, nút, nhạc theo trang ---------- */
 const whereEl = document.getElementById("where");
+// ảnh: chỉ tải ảnh của các trang quanh trang đang mở (trang sắp lật tới đã có ảnh sẵn)
+function warmPhotos() {
+  const at = solo ? padList[pi] : 2 * flipped;
+  for (let i = at - 6; i <= at + 8; i++) {
+    const el = sideEl(i);
+    if (el) el.querySelectorAll('img[loading="lazy"]').forEach(im => { im.loading = "eager"; });
+  }
+}
 function updateState() {
+  if (typeof padList !== "undefined") setTimeout(warmPhotos, 0);
   if (solo) return padState();
   const left = 2 * flipped - 1, right = 2 * flipped;
   if (solo) {
@@ -908,6 +956,7 @@ function padRender() {
   return top;
 }
 function padState() {
+  setTimeout(warmPhotos, 0);
   const side = padList[pi];
   flipped = side === 0 ? 0 : sides[side].kind === "back" ? LEAVES : Math.ceil(side / 2);   // để nhạc theo mục
   whereEl.textContent = side === 0 ? "Bìa" : sides[side].kind === "back" ? "Bìa sau" : String(pageNo(side));
@@ -1097,27 +1146,55 @@ padEl.addEventListener("click", e => {
 });
 
 /* Trang mỗi mục: nếu danh sách quán dài quá trang thì thu nhỏ chữ danh sách cho vừa (không bị đè lên chân trang) */
+/* Trang quán: "Lưu ý" quá dài so với chỗ trống thì cắt bớt, cuối dòng có "… xem thêm";
+   bấm vào đó thì hiện toàn bộ lời nhận xét trong 1 hộp giữa màn hình. Chữ giữ nguyên cỡ. */
 function fitLists() {
   sideEls.forEach((el, i) => {
-    const kind = sides[i].kind;
-    if (kind !== "place") return;                 // trang mục: không thu nhỏ chữ (dài thì sang trang sau)
-    const pf = el.querySelector(".pf");
-    const target = el.querySelector(".review");
-    if (!pf || !target) return;
+    if (sides[i].kind !== "place") return;
+    const pf = el.querySelector(".pf"), note = el.querySelector(".review[data-full]");
+    if (!pf || !note) return;
     const hid = []; for (let a = el; a && a !== document.body; a = a.parentElement) if (a.hidden) { hid.push(a); a.hidden = false; }
     const vis = el.style.visibility; el.style.visibility = "hidden";
     const em = parseFloat(getComputedStyle(el).fontSize);
     const lastBottom = () => { let b = 0; el.querySelectorAll(".page > :not(.pf)").forEach(k => { b = Math.max(b, k.getBoundingClientRect().bottom); }); return b; };
-    const short = () => pf.getBoundingClientRect().top - lastBottom() < FOOT_GAP * em;
-    // khung ảnh: cùng 1 kích thước trên mọi trang quán (đặt trong CSS), không tự co giãn
-    // nhận xét quá dài mà ảnh đã thấp hết mức: mới thu nhỏ chữ nhận xét
-    let f = 0.92;
-    const set = v => { target.style.fontSize = v + "em"; };
-    set(f);
-    while (short() && f > 0.62) { f -= 0.03; set(f.toFixed(2)); }
+    const fits = () => pf.getBoundingClientRect().top - lastBottom() >= FOOT_GAP * em;
+    const full = note.dataset.full;
+    note.textContent = "“" + full + "”";
+    if (!fits()) {
+      const words = full.split(/\s+/);
+      const show = n => { note.innerHTML = "“" + esc(words.slice(0, n).join(" ").replace(/[\s,.;:–-]+$/, "")) +
+        `…” <button type="button" class="see-more">xem thêm</button>`; };
+      let lo = 0, hi = words.length - 1;               // số chữ nhiều nhất mà vẫn vừa trang
+      while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); show(mid); if (fits()) lo = mid; else hi = mid - 1; }
+      if (lo >= 3) show(lo);
+      else note.innerHTML = `<button type="button" class="see-more">Xem review</button>`;   // quá ít chỗ: chỉ để nút mở nhận xét
+    }
     el.style.visibility = vis; hid.forEach(a => a.hidden = true);
   });
 }
+
+// hộp đọc toàn bộ lời nhận xét
+const noteBox = document.createElement("div");
+noteBox.className = "note-modal"; noteBox.hidden = true;
+noteBox.innerHTML = `<div class="nm-card" role="dialog" aria-modal="true" aria-labelledby="nm-title">
+  <button type="button" class="nm-close" aria-label="Đóng">×</button>
+  <h3 class="script" id="nm-title"></h3><p class="nm-text"></p></div>`;
+document.body.appendChild(noteBox);
+function openNote(btn) {
+  const page = btn.closest(".page"), dd = btn.closest(".review[data-full]");
+  noteBox.querySelector(".nm-card").style.setProperty("--c", page ? getComputedStyle(page).getPropertyValue("--c") : "");
+  noteBox.querySelector("#nm-title").textContent = page ? page.querySelector(".pname").textContent : "";
+  noteBox.querySelector(".nm-text").textContent = dd.dataset.full;
+  noteBox.hidden = false;
+  noteBox.querySelector(".nm-close").focus();
+}
+const closeNote = () => { noteBox.hidden = true; };
+document.addEventListener("click", e => {
+  const more = e.target.closest(".see-more");
+  if (more) { e.preventDefault(); e.stopPropagation(); openNote(more); return; }
+  if (e.target.closest(".nm-close") || e.target === noteBox) closeNote();
+}, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !noteBox.hidden) closeNote(); }, true);
 
 /* ---------- 7. Kích thước: luôn vừa màn hình, sổ nằm giữa ---------- */
 function resize() {
@@ -1276,15 +1353,26 @@ form.addEventListener("submit", async e => {
 });
 
 /* ---------- 10. Nút 👍 cho từng quán ----------
-   - Mỗi máy bấm 1 lần / quán (bấm lại để bỏ), nhớ trong localStorage.
+   - Mọi quán bắt đầu từ 0. Mỗi máy bấm 1 lần / quán (bấm lại để bỏ), nhớ trong localStorage.
    - Tổng lượt lưu trên Netlify (netlify/functions/votes.mjs). Số luôn hiện, tự cập nhật vài giây một lần.
-   - Bản xem thử (không có Netlify) dùng số mẫu để thấy cách hiện 1k, 1m. */
+   - Admin reset ở trang admin.html; máy nào đã bấm trước lần reset sẽ thấy nút trở lại chưa bấm.
+   - Bản xem thử (không có Netlify) chỉ đếm lượt bấm trên chính máy đó. */
 const VOTE_API = "/api/votes";
 const IS_PREVIEW = location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname) || location.hostname.includes("claude");
 let voteCounts = {};
-let myVotes = {};
+let myVotes = {}, myVer = {};                     // myVer[id] = "lượt reset" của quán lúc máy này bấm
 try { myVotes = JSON.parse(localStorage.getItem("so-tay-votes")) || {}; } catch (e) {}
-const saveMyVotes = () => { try { localStorage.setItem("so-tay-votes", JSON.stringify(myVotes)); } catch (e) {} };
+try { myVer = JSON.parse(localStorage.getItem("so-tay-votes-v")) || {}; } catch (e) {}
+const saveMyVotes = () => { try { localStorage.setItem("so-tay-votes", JSON.stringify(myVotes)); localStorage.setItem("so-tay-votes-v", JSON.stringify(myVer)); } catch (e) {} };
+// Quán đã bị admin reset sau khi máy này bấm → bỏ dấu đã bấm
+function dropStale() {
+  let changed = false;
+  Object.keys(myVotes).forEach(id => {
+    const v = (voteCounts[id] || {}).v || 0;
+    if ((myVer[id] || 0) !== v) { delete myVotes[id]; delete myVer[id]; changed = true; }
+  });
+  if (changed) saveMyVotes();
+}
 
 // 999 → "999", 1000 → "1k", 1250 → "1.2k", 15300 → "15k", 2400000 → "2.4m"
 function shortCount(n) {
@@ -1312,11 +1400,11 @@ function paintVotes() {
 }
 
 async function loadVotes() {
-  if (IS_PREVIEW) {           // số mẫu cho bản xem thử
-    PLACES.forEach((p, i) => { voteCounts[p.id] = { up: [12, 348, 1250, 87, 999, 15300, 4, 230, 2400000, 61, 1000, 512][i % 12], down: [1, 9, 40, 3, 12, 210, 0, 7, 3100, 2, 15, 8][i % 12] }; });
-    Object.entries(myVotes).forEach(([id, v]) => { if (voteCounts[id] && v) voteCounts[id][v]++; });
+  if (IS_PREVIEW) {           // bản xem thử: bắt đầu từ 0, chỉ cộng lượt bấm của máy này
+    PLACES.forEach(p => { voteCounts[p.id] = { up: 0, down: 0, v: 0 }; });
+    Object.entries(myVotes).forEach(([id, d]) => { if (voteCounts[id] && d) voteCounts[id][d]++; });
   } else {
-    try { const res = await fetch(VOTE_API); if (res.ok) voteCounts = await res.json(); } catch (e) {}
+    try { const res = await fetch(VOTE_API); if (res.ok) { voteCounts = await res.json(); dropStale(); } } catch (e) {}
   }
   paintVotes();
 }
@@ -1329,7 +1417,7 @@ async function refreshVotes() {
   if (!document.querySelector(".side:not([hidden]) .votes")) return;
   try {
     const res = await fetch(VOTE_API, { cache: "no-store" });
-    if (res.ok && !pending) { voteCounts = await res.json(); paintVotes(); }
+    if (res.ok && !pending) { voteCounts = await res.json(); dropStale(); paintVotes(); }
   } catch (e) {}
 }
 setInterval(refreshVotes, LIVE_MS);
@@ -1338,16 +1426,17 @@ document.addEventListener("visibilitychange", refreshVotes);
 async function castVote(id, dir) {
   const from = myVotes[id] || null;
   const to = from === dir ? null : dir;            // bấm lại = bỏ chọn; bấm nút kia = đổi
-  const c = voteCounts[id] = voteCounts[id] || { up: 0, down: 0 };
+  const c = voteCounts[id] = voteCounts[id] || { up: 0, down: 0, v: 0 };
+  const v = c.v || 0;
   if (from) c[from] = Math.max(0, c[from] - 1);
   if (to) c[to] = (c[to] || 0) + 1;
-  if (to) myVotes[id] = to; else delete myVotes[id];
+  if (to) { myVotes[id] = to; myVer[id] = v; } else { delete myVotes[id]; delete myVer[id]; }
   saveMyVotes(); paintVotes();
   if (IS_PREVIEW) return;
   pending++;
   try {
-    const res = await fetch(VOTE_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, from, to }) });
-    if (res.ok) { voteCounts[id] = await res.json(); paintVotes(); }
+    const res = await fetch(VOTE_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, from, to, v }) });
+    if (res.ok) { voteCounts[id] = await res.json(); if (to) myVer[id] = voteCounts[id].v || 0; saveMyVotes(); paintVotes(); }
   } catch (e) { /* mất mạng: giữ số tạm trên máy */ }
   finally { pending--; }
 }
@@ -1358,8 +1447,16 @@ document.addEventListener("click", e => {
   castVote(btn.closest(".votes").dataset.place, btn.dataset.vote);
 });
 
-// phông chữ tải xong: đo lại cho vừa trang
-if (document.fonts && document.fonts.status !== "loaded") document.fonts.ready.then(() => fitLists());
+/* Phông chữ tải xong: đo lại. Nếu cách chia trang mục khác lúc đầu (do phông dự phòng) thì tải lại 1 lần. */
+if (document.fonts && document.fonts.status !== "loaded") {
+  document.fonts.ready.then(() => {
+    fitLists();
+    const changed = SECTIONS.some(sec => paginateList(sec).map(pg => pg.length).join(",") !== LIST_SPLIT[sec.id]);
+    const sig = SECTIONS.map(sec => paginateList(sec).map(pg => pg.length).join(",")).join("|");
+    let tried = false; try { tried = sessionStorage.getItem("so-tay-refit") === sig; } catch (e) {}
+    if (changed && !tried) { try { sessionStorage.setItem("so-tay-refit", sig); } catch (e) {} location.reload(); }
+  });
+}
 
 /* ---------- Bắt đầu ---------- */
 resize();
