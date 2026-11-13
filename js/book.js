@@ -15,10 +15,10 @@ const sectionById = id => SECTIONS.find(s => s.id === id);
 SECTIONS.forEach(s => {
   const h = s.color.replace("#", ""), [r, g, b] = [0, 2, 4].map(k => parseInt(h.substr(k, 2), 16) / 255)
     .map(v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-  const light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
-  s.on = light ? "#3a2a12" : "#fff";
+  s.on = "#fff";      // mọi mục dùng chữ trắng trên nền màu (giống nhau ở cả 4 mục)
   // chữ trên giấy giữ màu mực bình thường; màu mục chỉ dùng cho nền (dải đầu trang, nền chuyển màu, nhãn khoảng cách)
   s.ct = "var(--ink)";
+  s.vars = `--c:${s.color};--on:${s.on};--ct:${s.ct}` + (s.color2 ? `;--c2:${s.color2}` : "");
 });
 /* nhóm khoảng cách trong trang mỗi mục */
 const DIST_BANDS = ["< 1 km", "1 – 2 km", "2 – 3 km"];
@@ -54,13 +54,50 @@ const keyToSide = {};
 function addSide(side) { keyToSide[side.key] = sides.length; sides.push(side); }
 
 addSide({ key: "cover", kind: "cover" });
-addSide({ key: "foreword", kind: "foreword" });
+// Lời nói đầu dài hơn 1 trang → chia theo đoạn ra nhiều trang (không thu nhỏ chữ)
+function splitForeword() {
+  const sw = stageEl.clientWidth, sh = stageEl.clientHeight, solo0 = sw && sh && sw < sh * 0.9;   // sổ dựng đứng: trang có lề trên rộng hơn (vòng xoắn)
+  const pw = !sw || !sh ? 480 : sw < sh * 0.9 ? Math.max(120, Math.floor(Math.min(sw - 28, (sh - 90) * 3 / 4, 560)))
+                                             : Math.max(120, Math.floor(Math.min((sw - 44) / 2, (sh - 30) / (4 / 3), 520)));
+  const probe = document.createElement("div");
+  probe.className = "side rp";
+  probe.style.cssText = `--pw:${pw}px;--ph:${Math.round(pw * 4 / 3)}px;left:-9999px;top:0;visibility:hidden;position:fixed`;
+  document.body.appendChild(probe);
+  // giữ các cụm từ trên cùng 1 dòng: thay khoảng trắng trong cụm bằng khoảng trắng không ngắt dòng (chữ giữ nguyên)
+  const keep = (BOOK.forewordKeep || []).slice().sort((x, y) => y.length - x.length);
+  const glue = t => keep.reduce((acc, k) => acc.split(k).join(k.replace(/ /g, "\u00a0")), t);
+  const paras = BOOK.foreword.map(t => `<p>${esc(glue(t))}</p>`), sign = `<p class="sign">${esc(BOOK.signature).replace(/\n/g, "<br>")}</p>`;
+  const fits = (first, html) => {
+    probe.innerHTML = `<div class="page ruled fw-page"${solo0 ? ' style="padding-top:12%"' : ""}>${first ? '<h2 class="script ptitle fw-title">Lời nói đầu</h2>' : ""}${html}
+      <footer class="pf"><span></span><span class="pno">00</span></footer></div>`;
+    const pg = probe.firstChild, foot = pg.querySelector(".pf").getBoundingClientRect().top;
+    if (!foot) return true;
+    const em = parseFloat(getComputedStyle(pg).fontSize);
+    let bottom = 0;
+    pg.querySelectorAll(":scope > :not(.pf)").forEach(k => { bottom = Math.max(bottom, k.getBoundingClientRect().bottom); });
+    return foot - bottom >= (solo0 ? 1.3 : 1.1) * em;   // chừa khoảng trống vừa phải giữa chữ ký và số trang   // sổ dựng đứng chừa rộng hơn chút (lề trang khác lúc đo)     // chữ ký sát chân trang hơn
+  };
+  // giữ Lời nói đầu trong 1 trang: thu nhỏ dần riêng phần chữ (tiêu đề giữ nguyên) tới khi vừa
+  const all = paras.concat(sign).join("");
+  // tìm cỡ chữ lớn nhất còn vừa (chia đôi khoảng 0.7–1), để chữ không nhỏ hơn mức cần thiết
+  let lo = 0.7, hi = 1, scale = 0.7;
+  if (fits(true, `<div class="fw-body">${all}</div>`)) scale = 1;
+  else for (let n = 0; n < 9; n++) {
+    const mid = (lo + hi) / 2;
+    if (fits(true, `<div class="fw-body" style="font-size:${mid.toFixed(3)}em">${all}</div>`)) { scale = mid; lo = mid; } else hi = mid;
+  }
+  scale = Math.floor(scale * 1000) / 1000;
+  const pages = [[`<div class="fw-body" style="font-size:${scale}em">${all}</div>`]];
+  probe.remove();
+  return pages;
+}
+splitForeword().forEach((html, k) => addSide({ key: k ? "foreword-" + (k + 1) : "foreword", kind: "foreword", html: html.join(""), first: k === 0 }));
 addSide({ key: "toc", kind: "toc" });
 /* Trang mỗi mục: danh sách quán chia theo khoảng cách, cả mục nằm trên 1 trang, chữ giữ nguyên cỡ.
    (Với cỡ chữ hiện tại, 1 trang chứa vừa khoảng 6–7 quán cho mỗi mục.) */
-const FOOT_GAP = 0.9;          // khoảng trống tối thiểu giữa nội dung và chân trang (tính theo cỡ chữ của trang)
+const FOOT_GAP = 0.5;          // khoảng trống tối thiểu giữa nội dung và chân trang (tính theo cỡ chữ của trang)
 // Chừa thêm 1 dòng: mỗi máy/cỡ màn hình xuống dòng hơi khác nhau (nhất là Windows), 1 địa chỉ có thể dài thêm 1 dòng so với lúc đo
-const LIST_SAFE = 1.3;
+const LIST_SAFE = 0.2;
 function listHead(sec, part) {      // mọi trang của mục (kể cả trang sau) dùng cùng 1 tiêu đề, cùng cỡ
   return `<header class="band"><span class="band-no">Mục ${SECTIONS.indexOf(sec) + 1}</span>
         <h2 class="script">${esc(sec.name)}</h2><p>${esc(sec.blurb)}</p></header>`;
@@ -93,12 +130,20 @@ function listEntries(sec) {
 }
 const fitProbe = document.createElement("div");
 fitProbe.className = "side rp";
-fitProbe.style.cssText = "--pw:480px;--ph:640px;left:-9999px;top:0;visibility:hidden;position:fixed";
+// đo đúng cỡ trang sẽ hiện (cùng công thức với resize()), để chữ xuống dòng y như thật
+const probePW = (() => {
+  const sw = stageEl.clientWidth, sh = stageEl.clientHeight;
+  if (!sw || !sh) return 480;
+  if (sw < sh * 0.9) return Math.max(120, Math.floor(Math.min(sw - 28, (sh - 90) * 3 / 4, 560)));
+  return Math.max(120, Math.floor(Math.min((sw - 44) / 2, (sh - 30) / (4 / 3), 520)));
+})();
+fitProbe.style.cssText = `--pw:${probePW}px;--ph:${Math.round(probePW * 4 / 3)}px;left:-9999px;top:0;visibility:hidden;position:fixed`;
 function listFits(sec, part, items) {
-  fitProbe.innerHTML = `<div class="page" style="--c:${sec.color}">${listHead(sec, part)}<div class="plists">${listBody(items)}</div>
+  fitProbe.innerHTML = `<div class="page" style="${sec.vars}">${listHead(sec, part)}<div class="plists">${listBody(items)}</div>
     <footer class="pf"><span class="link">Mục lục</span><span class="pno">00</span></footer></div>`;
   const em = parseFloat(getComputedStyle(fitProbe).fontSize);
   const foot = fitProbe.querySelector(".pf").getBoundingClientRect().top;
+  if (!foot) return items.length <= 5;          // không đo được (trang bị ẩn) → tạm xếp tối đa ~4 quán/trang
   let bottom = 0;
   fitProbe.querySelectorAll(".band, .plists > *").forEach(k => { bottom = Math.max(bottom, k.getBoundingClientRect().bottom); });
   return foot - bottom >= (FOOT_GAP + LIST_SAFE) * em;
@@ -115,6 +160,19 @@ function paginateList(sec) {
     pages[pages.length - 1].push(...add);
     if (e.t === "head") k++;
   }
+  // tránh trang cuối của mục chỉ còn 1 quán: chuyển bớt quán từ trang trước sang cho cân
+  const nPlaces = pg => pg.filter(e => e.t !== "head").length;
+  while (pages.length > 1) {
+    const last = pages[pages.length - 1], prev = pages[pages.length - 2];
+    if (nPlaces(last) >= 2 || nPlaces(prev) <= nPlaces(last) + 1) break;
+    let move = prev.slice(-1);
+    if (prev.length >= 2 && prev[prev.length - 2].t === "head") move = prev.slice(-2);   // tiêu đề nhóm đi cùng quán
+    if (move.length >= prev.length) break;
+    const cand = move.concat(last);
+    if (!listFits(sec, pages.length - 1, cand)) break;
+    prev.splice(prev.length - move.length, move.length);
+    pages[pages.length - 1] = cand;
+  }
   fitProbe.remove();
   return pages;
 }
@@ -122,14 +180,15 @@ const LIST_SPLIT = {};
 SECTIONS.forEach(sec => {
   const pages = paginateList(sec);
   LIST_SPLIT[sec.id] = pages.map(pg => pg.length).join(",");
+  // các mục nối tiếp nhau liền mạch (không chèn trang trống giữa các mục)
   pages.forEach((items, k) =>
     addSide({ key: "sec:" + sec.id + (k ? ":" + (k + 1) : ""), kind: "list", section: sec.id, items, part: k }));
   placesOf(sec.id).forEach(p => addSide({ key: "place:" + p.id, kind: "place", section: sec.id, place: p }));
 });
-// Hộp góp ý chiếm trọn 2 trang: luôn bắt đầu ở trang trái
-if (sides.length % 2 === 0) addSide({ key: "blank-a", kind: "blank" });
+// Hộp góp ý (2 trang) và series foodtour nối tiếp ngay sau mục cuối
 addSide({ key: "suggest", kind: "suggest" });
 addSide({ key: "suggest-2", kind: "suggest2" });
+SERIES.episodes.forEach((ep, k) => addSide({ key: k ? "series-" + (k + 1) : "series", kind: "series", ep, part: k }));   // mỗi tập 1 trang, 2 tập nằm cạnh nhau
 // Bìa sau phải là mặt sau của tờ cuối (vị trí lẻ) → chèn trang trống nếu cần
 if (sides.length % 2 === 0) addSide({ key: "blank", kind: "blank" });
 addSide({ key: "back", kind: "back" });
@@ -148,6 +207,8 @@ function renderSide(side, i) {
   const sec = side.section ? sectionById(side.section) : null;
   switch (side.kind) {
     case "cover":
+      if (BOOK.coverImage)       // ảnh bìa đã có sẵn tên sổ → chỉ hiện ảnh + lời nhắc
+        return `<div class="cover has-img"><img class="cover-img" src="${esc(BOOK.coverImage)}" alt="${esc(BOOK.title.replace("\n", " "))}"><p class="cover-hint">Chạm để mở sổ</p></div>`;
       return `<div class="cover">
         ${BOOK.coverImage
           ? `<img class="cover-img" src="${esc(BOOK.coverImage)}" alt="">`
@@ -157,28 +218,28 @@ function renderSide(side, i) {
         <p class="cover-hint">Chạm để mở sổ</p>
       </div>`;
 
-    case "foreword":
-      return `<div class="page ruled">
-        <h2 class="script ptitle">Lời nói đầu</h2>
-        ${BOOK.foreword.map(t => `<p>${esc(t)}</p>`).join("")}
-        <p class="sign">${esc(BOOK.signature)}</p>
-        ${footer(i)}
+    case "foreword":       // trang Lời nói đầu: chân trang chỉ có số trang (không có link)
+      return `<div class="page ruled fw-page">
+        ${side.first ? '<h2 class="script ptitle fw-title">Lời nói đầu</h2>' : ""}
+        ${side.html}
+        <footer class="pf"><span></span><span class="pno">${pageNo(i)}</span></footer>
       </div>`;
 
     case "toc":
       return `<div class="page ruled">
         <h2 class="script ptitle">Mục lục</h2>
         <ol class="toc">
-          ${SECTIONS.map((s, n) => `<li><button type="button" data-goto="sec:${s.id}" style="--c:${s.color};--on:${s.on};--ct:${s.ct}">
+          ${SECTIONS.map((s, n) => `<li><button type="button" data-goto="sec:${s.id}" style="${s.vars}">
             <span class="dot">${n + 1}</span><span class="tname">${esc(s.name)}</span>
             <span class="lead"></span><span class="tpage">${keyToSide["sec:" + s.id]}</span></button></li>`).join("")}
         </ol>
         <button type="button" class="link toc-suggest" data-goto="suggest">Hộp góp ý · trang ${keyToSide.suggest}</button>
+        <button type="button" class="link toc-suggest toc-series" data-goto="series">${esc(SERIES.tocTitle)} · trang ${keyToSide.series}</button>
         <footer class="pf"><span></span><span class="pno">${pageNo(i)}</span></footer>
       </div>`;
 
     case "list":
-      return `<div class="page" style="--c:${sec.color};--on:${sec.on};--ct:${sec.ct}">
+      return `<div class="page" style="${sec.vars}">
         ${listHead(sec, side.part)}
         <div class="plists">${listBody(side.items)}</div>
         ${footer(i)}
@@ -186,9 +247,9 @@ function renderSide(side, i) {
 
     case "place": {
       const p = side.place;
-      return `<div class="page" style="--c:${sec.color};--on:${sec.on};--ct:${sec.ct}">
+      return `<div class="page" style="${sec.vars}">
         <div class="photo n${photosOf(p).length}${p.layout === "rows" ? " rows" : ""}">${photosOf(p).map((src, k) =>
-          `<div class="ph">${src ? `<img src="${esc(src)}" alt="${esc(p.name)} – ảnh ${k + 1}" loading="lazy" decoding="async"${cropStyle(src)}>` : ""}</div>`).join("")}</div>
+          `<div class="ph">${src ? `<img src="${esc(src)}" alt="${esc(p.name)} – ảnh ${k + 1}" loading="lazy" decoding="async" draggable="false"${cropStyle(src)}>` : ""}</div>`).join("")}</div>
         <div class="name-row">
           <h2 class="script pname">${esc(p.name)}</h2>
           <div class="votes" data-place="${p.id}">
@@ -262,8 +323,21 @@ function renderSide(side, i) {
         <footer class="pf"><span></span><span class="pno">${pageNo(i)}</span></footer>
       </div>`;
 
-    case "blank":
-      return `<div class="page ruled"></div>`;
+    case "series": {       // series foodtour: mỗi tập 1 trang, bấm để mở Facebook
+      const ep = side.ep;
+      return `<div class="page ruled">
+        <h2 class="script ptitle series-title${side.part ? " ghost" : ""}"${side.part ? ' aria-hidden="true"' : ""}>${esc(SERIES.title).replace(/\n/g, "<br>")}</h2>
+        <a class="ep" href="${esc(ep.url)}" target="_blank" rel="noopener">
+          <span class="ep-thumb"><img src="${esc(ep.thumb)}" alt="" loading="lazy" draggable="false"><span class="ep-play" aria-hidden="true">▶</span></span>
+          <span class="ep-title">${esc(ep.title)}</span>
+          <span class="ep-more">Xem trên Facebook ↗</span>
+        </a>
+        <footer class="pf"><span></span><span class="pno">${pageNo(i)}</span></footer>
+      </div>`;
+    }
+
+    case "blank":          // trang trống trước mục mới: tô màu của mục trước cho liền mạch
+      return sec ? `<div class="page blank-fill" style="${sec.vars}"></div>` : `<div class="page ruled"></div>`;
 
     case "back":
       return `<div class="cover back">
@@ -783,8 +857,11 @@ bookEl.addEventListener("pointermove", e => {
 });
 bookEl.addEventListener("pointerleave", () => { if (!ptr) endPeek(); });
 
+// Kéo ảnh trong sổ: trình duyệt mặc định "kéo ảnh ra ngoài" → chặn để cú giữ-kéo lật trang
+document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest(".stage")) e.preventDefault(); }, true);
 bookEl.addEventListener("pointerdown", e => {
   if (!e.isPrimary || interactive(e.target)) return;
+  if (e.target.tagName === "IMG") e.preventDefault();      // không cho trình duyệt bắt đầu kéo ảnh
   startMusicOnce();
   const p = bookPoint(e);
   const dir = peek ? peek.dir
@@ -1120,6 +1197,7 @@ function padGo(target) {
 let pptr = null;
 padEl.addEventListener("pointerdown", e => {
   if (!e.isPrimary || interactive(e.target)) return;
+  if (e.target.tagName === "IMG") e.preventDefault();
   startMusicOnce();
   pptr = { id: e.pointerId, x: e.clientX, y: e.clientY };
   padEl.setPointerCapture(e.pointerId);
@@ -1157,7 +1235,7 @@ function fitLists() {
     const vis = el.style.visibility; el.style.visibility = "hidden";
     const em = parseFloat(getComputedStyle(el).fontSize);
     const lastBottom = () => { let b = 0; el.querySelectorAll(".page > :not(.pf)").forEach(k => { b = Math.max(b, k.getBoundingClientRect().bottom); }); return b; };
-    const fits = () => pf.getBoundingClientRect().top - lastBottom() >= FOOT_GAP * em;
+    const fits = () => pf.getBoundingClientRect().top - lastBottom() >= 0.9 * em;   // trang quán: giữ khoảng cách cũ
     const full = note.dataset.full;
     note.textContent = "“" + full + "”";
     if (!fits()) {
@@ -1201,14 +1279,16 @@ function resize() {
   const w = stageEl.clientWidth - 44, h = stageEl.clientHeight - 30;   // chừa chỗ cho mép giấy và bóng
   const wasSolo = solo;
   solo = stageEl.clientWidth < stageEl.clientHeight * 0.9;               // điện thoại / máy tính bảng dựng đứng
+  document.documentElement.classList.toggle("is-solo", solo);           // nền đổi bố cục theo
   document.body.classList.toggle("solo", solo);
   if (solo) {
     // sổ lật lên: 1 tờ, giữ tỉ lệ 3:4 như sổ ngang; chừa khoảng trống phía trên cho tờ giấy vòng qua
     const sw = stageEl.clientWidth, sh = stageEl.clientHeight;
-    PW = Math.max(120, Math.floor(Math.min(sw - 28, (sh - 40) * 3 / 4, 560)));
+    PW = Math.max(120, Math.floor(Math.min(sw - 28, (sh - 90) * 3 / 4, 560)));
     PH = Math.round(PW * 4 / 3);
     document.documentElement.style.setProperty("--padx", Math.round((sw - PW) / 2) + "px");
-    document.documentElement.style.setProperty("--pady", Math.round(Math.max(22, (sh - PH) * 0.74)) + "px");
+    // đặt sổ ở giữa (cách đều trên/dưới), không sát các element dưới đáy; chừa đủ chỗ cho vòng xoắn ở trên
+    document.documentElement.style.setProperty("--pady", Math.round(Math.max(22, (sh - PH) / 2 + 6)) + "px");
   } else {
     PW = Math.max(120, Math.floor(Math.min(w / 2, h / (4 / 3), 520)));   // trang tỉ lệ 3:4
     PH = Math.round(PW * 4 / 3);
@@ -1225,7 +1305,7 @@ window.addEventListener("resize", resize);
 /* ---------- 6. Nhạc ---------- */
 const tracks = {};
 let musicOn = true, musicStarted = false, currentSrc = null;
-try { musicOn = localStorage.getItem("so-tay-music") !== "off"; } catch (e) {}
+// mỗi lần mở trang nhạc luôn ở "bật" (không nhớ lần tắt trước)
 
 function trackFor(left, right) {
   const s = sides[right] && sides[right].kind !== "back" ? sides[right] : sides[left];
@@ -1242,10 +1322,11 @@ function audio(src) {
   return tracks[src];
 }
 function fade(a, to, ms = 600) {
-  const from = a.volume, t0 = performance.now();
+  const from = a.volume, t0 = performance.now(), id = (a._fade = (a._fade || 0) + 1);   // lần fade mới thay lần cũ
   (function step(t) {
-    const k = Math.min(1, (t - t0) / ms);
-    a.volume = from + (to - from) * k;
+    if (a._fade !== id) return;
+    const k = Math.max(0, Math.min(1, (t - t0) / ms));      // khung hình có thể mang mốc thời gian sớm hơn t0 → không để âm
+    a.volume = Math.max(0, Math.min(1, from + (to - from) * k));
     if (k < 1) requestAnimationFrame(step);
     else if (to === 0) a.pause();
   })(t0);
@@ -1253,7 +1334,7 @@ function fade(a, to, ms = 600) {
 function updateMusic(left, right) {
   const src = flipped === 0 ? MUSIC.main : trackFor(left, right);
   if (!musicStarted || !musicOn) { currentSrc = src; return; }
-  if (src === currentSrc && !tracks[src]?.paused) return;
+  if (src === currentSrc && tracks[src] && !tracks[src].paused) return;   // đang phát đúng bài thì thôi (chưa tạo bài nào thì phải tạo)
   if (currentSrc && tracks[currentSrc] && currentSrc !== src) fade(tracks[currentSrc], 0);
   currentSrc = src;
   const a = audio(src);
@@ -1265,6 +1346,8 @@ function startMusicOnce() {      // trình duyệt chỉ cho phát nhạc sau c�
   musicStarted = true;
   updateMusic(2 * flipped - 1, 2 * flipped);
 }
+// chạm bất kỳ đâu trên trang (cả nền ngoài sổ) cũng tính là cú chạm đầu tiên
+document.addEventListener("pointerdown", () => startMusicOnce(), { once: true, capture: true });
 const musicBtn = document.getElementById("btn-music");
 function paintMusicBtn() {
   musicBtn.setAttribute("aria-pressed", musicOn);
@@ -1272,7 +1355,6 @@ function paintMusicBtn() {
 }
 musicBtn.addEventListener("click", () => {
   musicOn = !musicOn;
-  try { localStorage.setItem("so-tay-music", musicOn ? "on" : "off"); } catch (e) {}
   paintMusicBtn();
   if (musicOn) { musicStarted = true; const s = currentSrc; currentSrc = null; updateMusic(2 * flipped - 1, 2 * flipped); if (!currentSrc) currentSrc = s; }
   else Object.values(tracks).forEach(a => fade(a, 0, 300));
@@ -1409,8 +1491,8 @@ async function loadVotes() {
   paintVotes();
 }
 
-// "Thời gian thực": hỏi lại số lượt mỗi 6 giây khi đang xem trang quán (tab đang mở)
-const LIVE_MS = 6000;
+// "Thời gian thực": hỏi lại số lượt mỗi 30 giây khi đang xem trang quán (tab đang mở)
+const LIVE_MS = 30000;   // 30 giây: đỡ tốn lượt gọi máy chủ (credit Netlify); bấm 👍 vẫn cập nhật ngay
 let pending = 0;                                   // đang gửi lượt bấm thì tạm bỏ qua kết quả cũ
 async function refreshVotes() {
   if (IS_PREVIEW || document.hidden || pending) return;

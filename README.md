@@ -34,4 +34,9 @@ Số lượt thích được lưu bằng `netlify/functions/votes.mjs` + Netlify
 Kéo-thả thư mục vào Netlify Drop KHÔNG chạy được phần này. Hãy deploy bằng 1 trong 2 cách:
 - Đưa thư mục lên GitHub, rồi trên Netlify chọn "Add new site > Import from Git" (Netlify tự cài `@netlify/blobs` từ package.json).
 - Hoặc dùng Netlify CLI: `npm install`, `npx netlify deploy --prod`.
-Mỗi máy chỉ bấm được 1 lần cho mỗi quán (bấm lại để bỏ). Số lượt luôn hiện và tự cập nhật mỗi 6 giây (LIVE_MS trong js/book.js).
+Mọi quán bắt đầu từ 0. Mỗi máy chỉ bấm được 1 lần cho mỗi quán (bấm lại để bỏ). Số lượt luôn hiện và tự cập nhật mỗi 6 giây (LIVE_MS trong js/book.js).
+
+### Reset lượt 👍 (admin)
+1. Netlify > Site configuration > Environment variables > Add a variable: Key `ADMIN_KEY`, Value = một mã bí mật do bạn tự đặt. Deploy lại 1 lần.
+2. Mở `https://<tên-trang>.netlify.app/admin.html`, nhập mã, bấm "Về 0" cho từng quán hoặc "Reset tất cả về 0".
+Trang admin không có link trong sổ tay. Chưa đặt ADMIN_KEY thì không ai reset được.
